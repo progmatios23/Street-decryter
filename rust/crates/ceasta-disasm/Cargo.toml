@@ -1,0 +1,11 @@
+[package]
+name = "ceasta-disasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Instruction decode (iced-x86 for x86/x64)"
+
+[dependencies]
+ceasta-binary.workspace = true
+iced-x86.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "ceasta-script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lua plugin host (mlua) — API scaffold"
+
+[dependencies]
+ceasta-db.workspace = true
+thiserror.workspace = true
+
+# mlua is optional until the full plugin surface is wired; keeps default builds light
+[features]
+default = []
+lua = []

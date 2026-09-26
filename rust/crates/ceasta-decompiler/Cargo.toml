@@ -1,0 +1,11 @@
+[package]
+name = "ceasta-decompiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "F5-style pseudocode (scaffold)"
+
+[dependencies]
+ceasta-binary.workspace = true
+ceasta-analysis.workspace = true
+ceasta-disasm.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "ceasta-debugger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "User-mode debugger trait + host-safe attach"
+
+[dependencies]
+ceasta-host.workspace = true
+thiserror.workspace = true
