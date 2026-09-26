@@ -718,6 +718,7 @@ bool debugger::start(const std::string& exe, const std::string& args, const std:
     d->state = dbg_state::running;
     // this first stop is the post-execve SIGTRAP: the program is already mapped,
     // so set it up here (a later PTRACE_EVENT_EXEC would be too late for our bp)
+    host_health_reset();
     d->after_exec(child);
     return true;
 }
@@ -727,6 +728,13 @@ bool debugger::attach(uint32_t pid, std::string& err)
     if (d->state != dbg_state::none) {
         err = "a process is already being debugged";
         return false;
+    }
+    if (protect_host) {
+        std::string why = host_protect_reason(pid);
+        if (!why.empty()) {
+            err = util::fmt("refusing to attach to %u: %s (debug > protect this machine)", pid, why.c_str());
+            return false;
+        }
     }
     if (ptrace(PTRACE_ATTACH, (pid_t)pid, nullptr, nullptr) < 0) {
         err = util::fmt("can't attach to %u: ", pid) + errno_str(errno);
@@ -748,6 +756,7 @@ bool debugger::attach(uint32_t pid, std::string& err)
     d->entry = d->read_auxv_entry();
     d->state = dbg_state::stopped;
     d->reason = "attached";
+    host_health_reset();
     if (on_created)
         on_created();
     return true;
@@ -1230,7 +1239,11 @@ std::vector<process_info> list_processes()
         std::string name = util::trim(slurp(util::fmt("/proc/%ld/comm", p)));
         if (name.empty())
             continue;
-        out.push_back({(uint32_t)p, name});
+        process_info info;
+        info.pid = (uint32_t)p;
+        info.name = name;
+        info.protect_reason = host_protect_reason(info.pid, info.name);
+        out.push_back(info);
     }
     closedir(dir);
     std::sort(out.begin(), out.end(),

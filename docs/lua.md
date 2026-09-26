@@ -131,8 +131,12 @@ each returns an array of tables (use with `ipairs`):
 | `functions()` | `{ addr, size, name, thunk }` |
 | `imports()` | `{ name, lib, slot }` |
 | `exports()` | `{ name, addr, ordinal }` |
+| `tls_callbacks()` | `{ addr, index, name }` — PE TLS callbacks (run before the entry point); empty otherwise |
 | `strings()` | `{ addr, text, wide }` |
 | `xrefs_to(addr)` | `{ from, to, type }` — `type` is `"call"`/`"jump"`/`"read"`/`"write"`/`"offset"` |
+
+`host_protect_reason(pid)` returns a string explaining why attach is refused with
+**Debug → Protect this machine** on, or `nil` when that pid is fine to attach to.
 
 ### searching
 
@@ -212,10 +216,12 @@ available while a process is loaded under the debugger (windows, or linux with `
 | `"load"` | analysis finished | — |
 | `"stop"` | the debugger stopped | the static pc |
 | `"exit"` | the debuggee exited | the exit code |
+| `"host_alert"` | the host looks gone while debugging (BSOD / hard reboot / critical process vanished) | — |
 
 ```lua
 ceasta.on("load", function() ceasta.log("ready: " .. ceasta.file().name) end)
 ceasta.on("stop", function(pc) ceasta.log("stopped at " .. ceasta.location(pc)) end)
+ceasta.on("host_alert", function() ceasta.warn("host may have crashed — stop writing memory") end)
 ```
 
 ## examples
@@ -273,6 +279,8 @@ the `plugins/` folder has five worked examples you can read and copy:
 | `name_wrappers.lua` | renames one-call wrapper functions to `w_<callee>` |
 | `strings_report.lua` | groups urls / paths / registry keys / format strings |
 | `trace_calls.lua` | debugger plugin: single-steps a stopped target and logs calls |
+| `tls_review.lua` | lists PE TLS callbacks and comments them in the listing |
+| `host_guard.lua` | explains host protection; warns on a `host_alert` (BSOD watch) |
 
 ## limits and safety
 
@@ -280,3 +288,6 @@ the `plugins/` folder has five worked examples you can read and copy:
   loop is cancelled instead of freezing the program.
 - an error in a plugin is reported in the output panel; it does not crash ceasta.
 - the `ceasta-cli` sandbox and the tests never start or attach to a process.
+- **Protect this machine** (on by default) refuses attach to ceasta itself, its
+  parent, and critical os processes. **Watch for host crash / BSOD** (on by
+  default) raises `host_alert` if the host looks gone while a session is live.

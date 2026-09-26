@@ -507,19 +507,14 @@ void inspect_pe(const binary& b, file_info& out)
             }
         }
     }
-    // tls callbacks run before the entry point: debuggers miss them, malware likes them
-    uint32_t trva, tsize;
-    if (dir(9, trva, tsize)) {
-        uint64_t t = c.rva_to_off(trva);
-        uint64_t cb_va = t == ~0ull ? 0 : pe64 ? r.u64(t + 24) : r.u32(t + 12);
-        int n = 0;
-        uint64_t v = 0;
-        while (cb_va && n < 64 && b.read_ptr(cb_va + (uint64_t)n * b.ptr_size(), v) && v)
-            n++;
-        if (n) {
-            out.header.push_back({"tls callbacks", std::to_string(n)});
-            out.warnings.push_back(util::fmt("%d tls callback%s: code that runs before the entry point", n, n == 1 ? "" : "s"));
-        }
+    // tls callbacks run before the entry point: debuggers miss them unless they break on them
+    if (!b.tls_callbacks.empty()) {
+        out.header.push_back({"tls callbacks", std::to_string(b.tls_callbacks.size())});
+        for (size_t i = 0; i < b.tls_callbacks.size(); i++)
+            out.header.push_back({util::fmt("  tls_callback_%zu", i), util::hex(b.tls_callbacks[i])});
+        out.warnings.push_back(util::fmt("%zu tls callback%s: code that runs before the entry point "
+            "(debug > break on tls callbacks catches them)",
+            b.tls_callbacks.size(), b.tls_callbacks.size() == 1 ? "" : "s"));
     }
     uint32_t crva, csize;
     if (dir(14, crva, csize)) {

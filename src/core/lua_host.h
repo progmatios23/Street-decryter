@@ -53,7 +53,8 @@ public:
     bool run_string(const std::string& code, const std::string& chunk_name);
     bool run_file(const std::string& path);
 
-    // "load" (analysis done), "stop" (debugger stopped, arg = static pc), "exit" (arg = exit code)
+    // "load" (analysis done), "stop" (debugger stopped, arg = static pc), "exit" (arg = exit code),
+    // "host_alert" (host looks gone / BSOD while debugging)
     void fire(const std::string& event, int64_t arg = 0);
 
     int timeout_ms = 30000;

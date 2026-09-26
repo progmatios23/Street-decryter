@@ -59,6 +59,12 @@ static void load_settings(app_state& s)
                                       : theme::ui_theme::dark;
         else if (k == "break_on_entry")
             s.dbg.break_on_entry = v == "1";
+        else if (k == "break_on_tls")
+            s.dbg.break_on_tls = v == "1";
+        else if (k == "protect_host")
+            s.dbg.protect_host = v == "1";
+        else if (k == "watch_host")
+            s.dbg.watch_host = v == "1";
         else if (k == "debug_args")
             s.debug_args = v;
         else if (k == "step_count")
@@ -89,8 +95,10 @@ static void save_settings(app_state& s)
     std::string o;
     o += util::fmt("font_size=%g\nleft_w=%g\nright_w=%g\nbottom_h=%g\nright_split=%g\n", s.font_size, s.left_w, s.right_w,
         s.bottom_h, s.right_split);
-    o += util::fmt("show_left=%d\nshow_right=%d\nshow_bottom=%d\nshow_bytes=%d\nbreak_on_entry=%d\n", s.show_left,
-        s.show_right, s.show_bottom, s.show_bytes, s.dbg.break_on_entry);
+    o += util::fmt("show_left=%d\nshow_right=%d\nshow_bottom=%d\nshow_bytes=%d\nbreak_on_entry=%d\n"
+                   "break_on_tls=%d\nprotect_host=%d\nwatch_host=%d\n",
+        s.show_left, s.show_right, s.show_bottom, s.show_bytes, s.dbg.break_on_entry, s.dbg.break_on_tls,
+        s.dbg.protect_host, s.dbg.watch_host);
     o += util::fmt("win_w=%d\nwin_h=%d\nwin_max=%d\n", s.win_w, s.win_h, s.win_max);
     const char* tname = s.theme == theme::ui_theme::light ? "light"
                       : s.theme == theme::ui_theme::contrast ? "contrast" : "dark";
@@ -599,12 +607,38 @@ static void map_debuggee(app_state& s)
         if (!s.dbg.add_bp(bp + s.dbg_delta, err))
             app_log(s, "breakpoint at " + s.db->fmt_addr(bp) + ": " + err, 1);
     }
+    // tls callbacks run before the entry point — catch them with real breakpoints so the
+    // listing follows, the same way a break at entry does. session-only (not written to the db).
+    if (s.dbg.break_on_tls && !s.db->bin.tls_callbacks.empty()) {
+        int n = 0;
+        for (uint64_t cb : s.db->bin.tls_callbacks) {
+            std::string err;
+            if (s.dbg.add_bp(cb + s.dbg_delta, err))
+                n++;
+            else
+                app_log(s, "tls callback at " + s.db->location(cb) + ": " + err, 1);
+        }
+        if (n)
+            app_log(s, util::fmt("breaking on %d tls callback%s (before the entry point)", n, n == 1 ? "" : "s"));
+    }
 }
 
 void app_dbg_pump(app_state& s, uint32_t timeout_ms)
 {
     if (s.dbg.state() == dbg_state::running)
         s.dbg.poll(timeout_ms);
+    // while a session is live, watch for the host going away (bsod / hard reboot)
+    if (s.dbg.watch_host && s.dbg.state() != dbg_state::none) {
+        std::string alert = host_health_check();
+        if (!alert.empty()) {
+            app_log(s, "[host] " + alert, 2);
+            if (s.dbg.on_host_alert)
+                s.dbg.on_host_alert(alert);
+            s.lua.fire("host_alert", 0);
+        }
+    } else if (s.dbg.state() == dbg_state::none) {
+        host_health_reset();
+    }
     // past breakpoints whose condition didn't hold; the next one may stop again
     for (int i = 0; i < 256 && s.auto_continue && s.dbg.state() == dbg_state::stopped; i++) {
         s.auto_continue = false;

@@ -641,6 +641,7 @@ bool debugger::start(const std::string& exe, const std::string& args, const std:
     d->main_tid = d->cur_tid = pi.dwThreadId;
     d->state = dbg_state::running;
     DebugSetProcessKillOnExit(TRUE);
+    host_health_reset();
     return true;
 }
 
@@ -649,6 +650,13 @@ bool debugger::attach(uint32_t pid, std::string& err)
     if (d->state != dbg_state::none) {
         err = "a process is already being debugged";
         return false;
+    }
+    if (protect_host) {
+        std::string why = host_protect_reason(pid);
+        if (!why.empty()) {
+            err = util::fmt("refusing to attach to %u: %s (debug > protect this machine)", pid, why.c_str());
+            return false;
+        }
     }
     if (!DebugActiveProcess(pid)) {
         err = util::fmt("can't attach to %u: ", pid) + win_error(GetLastError());
@@ -661,6 +669,7 @@ bool debugger::attach(uint32_t pid, std::string& err)
     d->state = dbg_state::running;
     // closing ceasta must not take down a process we only attached to
     DebugSetProcessKillOnExit(FALSE);
+    host_health_reset();
     return true;
 }
 
@@ -1054,12 +1063,16 @@ std::vector<process_info> list_processes()
     PROCESSENTRY32W pe;
     memset(&pe, 0, sizeof(pe));
     pe.dwSize = sizeof(pe);
-    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe))
-        out.push_back({pe.th32ProcessID, os::narrow(pe.szExeFile)});
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        process_info p;
+        p.pid = pe.th32ProcessID;
+        p.name = os::narrow(pe.szExeFile);
+        p.protect_reason = host_protect_reason(p.pid, p.name);
+        out.push_back(p);
+    }
     CloseHandle(snap);
-    std::sort(out.begin(), out.end(), [](const process_info& a, const process_info& b) {
-        return util::lower(a.name) < util::lower(b.name);
-    });
+    std::sort(out.begin(), out.end(),
+        [](const process_info& a, const process_info& b) { return util::lower(a.name) < util::lower(b.name); });
     return out;
 }
 

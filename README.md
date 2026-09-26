@@ -97,6 +97,9 @@ grab it from the [releases page](https://github.com/ngwg/ceasta/releases):
 - your work in one file, like ida's `.i64`: ctrl+s writes `<file>.ceasta` with your names, comments, types, breakpoints and the program itself — it opens later, or on another machine, without the original. closing asks before it throws unsaved work away
 - trade names with other tools: export an idapython script, a ghidra script or an x64dbg database; import from x64dbg, `.map` files, and ida / ghidra (with the scripts in `scripts/`)
 - lua plugins and a lua console; `ceasta-cli` for scripts and ci
+- host protection while debugging: refuse attach to this process / critical os
+  processes, break on pe tls callbacks before entry, and raise an alert if the
+  host looks like it bluescreened or rebooted mid-session
 
 ## layout
 
@@ -134,7 +137,7 @@ the decompiler (f5), here next to the listing (shift+f5) — a click in one move
 
 ## plugins
 
-plugins are lua files in `plugins/` (next to the program) or in your own plugins folder (`%APPDATA%\ceasta\plugins`, `~/.config/ceasta/plugins`). they add commands to the plugins menu. five come with it: file summary, crypto finder, wrapper namer, strings report, call tracer (debugger).
+plugins are lua files in `plugins/` (next to the program) or in your own plugins folder (`%APPDATA%\ceasta\plugins`, `~/.config/ceasta/plugins`). they add commands to the plugins menu. seven come with it: file summary, crypto finder, wrapper namer, strings report, call tracer (debugger), tls callback review, and host-protect explain.
 
 ```lua
 ceasta.register_command("Count calls", function()

@@ -187,6 +187,13 @@ static void debug_menu(app_state& s)
     if (ImGui::MenuItem("Program arguments...", nullptr, false, st == dbg_state::none))
         dialogs::open(s, dialog_kind::run_args, 0);
     ImGui::MenuItem("Break at the entry point", nullptr, &s.dbg.break_on_entry);
+    ImGui::MenuItem("Break on tls callbacks", nullptr, &s.dbg.break_on_tls);
+    ImGui::SetItemTooltip("tls callbacks run before the entry point; break on them so the listing follows");
+    ImGui::Separator();
+    ImGui::MenuItem("Protect this machine", nullptr, &s.dbg.protect_host);
+    ImGui::SetItemTooltip("refuse attach to ceasta itself, its parent, and critical os processes (csrss, lsass, pid 1, ...)");
+    ImGui::MenuItem("Watch for host crash / BSOD", nullptr, &s.dbg.watch_host);
+    ImGui::SetItemTooltip("while debugging, detect the host going away (critical process gone, big clock jump) and raise an alert");
     ImGui::EndMenu();
 }
 

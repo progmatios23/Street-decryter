@@ -112,10 +112,18 @@ public:
     bool select_thread(uint32_t tid);
 
     bool break_on_entry = true;
+    // pe tls callbacks run before the entry point; when set, map_debuggee puts breakpoints on them
+    bool break_on_tls = true;
+    // refuse attach to this process, its parent, and critical os processes (csrss, lsass, pid 1, ...)
+    bool protect_host = true;
+    // while debugging, watch for the host disappearing (bsod / hard reboot) and raise on_host_alert
+    bool watch_host = true;
     std::function<void(const std::string&)> on_log;
     std::function<void()> on_created;   // process is mapped, a good time to set breakpoints
     std::function<void()> on_stop;
     std::function<void(int)> on_exit;
+    // host looks gone (bsod / reboot) or a critical process vanished; arg = short reason
+    std::function<void(const std::string&)> on_host_alert;
 
     struct impl;
 
@@ -145,5 +153,17 @@ private:
 struct process_info {
     uint32_t pid = 0;
     std::string name;
+    // non-empty when attach would be refused with protect_host on (self, parent, critical os)
+    std::string protect_reason;
 };
 std::vector<process_info> list_processes();
+
+// why attaching to this process would hurt the machine we are on. empty = ok to attach.
+// name may be empty; when given it skips a second lookup. used by the attach dialog and attach().
+std::string host_protect_reason(uint32_t pid, const std::string& name = {});
+
+// while a debug session is live: look for the host going away (bsod / hard reboot / the
+// session machine dying). returns a short reason, or empty when the host still looks fine.
+// cheap enough to call from the ui pump; it self-throttles.
+std::string host_health_check();
+void host_health_reset(); // call when a debug session starts / ends

@@ -59,6 +59,7 @@
     <ClCompile Include="..\src\core\kuna.cpp" />
     <ClCompile Include="..\src\core\process.cpp" />
     <ClCompile Include="..\src\core\fileinfo.cpp" />
+    <ClCompile Include="..\src\core\host_guard.cpp" />
     <ClCompile Include="..\src\core\json.cpp" />
     <ClCompile Include="..\src\core\lua_host.cpp" />
     <ClCompile Include="..\src\core\macho.cpp" />

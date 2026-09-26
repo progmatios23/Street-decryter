@@ -356,6 +356,38 @@ int api_exports(lua_State* L)
     return 1;
 }
 
+// pe tls callbacks that run before the entry point (and again on thread attach)
+int api_tls_callbacks(lua_State* L)
+{
+    database* db = need_db(L);
+    begin_array(L);
+    int i = 0;
+    for (size_t k = 0; k < db->bin.tls_callbacks.size(); k++) {
+        uint64_t a = db->bin.tls_callbacks[k];
+        lua_newtable(L);
+        push_addr(L, a);
+        lua_setfield(L, -2, "addr");
+        lua_pushinteger(L, (lua_Integer)k);
+        lua_setfield(L, -2, "index");
+        lua_pushstring(L, db->name_at(a).c_str());
+        lua_setfield(L, -2, "name");
+        array_push(L, i);
+    }
+    return 1;
+}
+
+// why attach to this pid is refused with protect_host on; nil when it's fine
+int api_host_protect_reason(lua_State* L)
+{
+    uint32_t pid = (uint32_t)luaL_checkinteger(L, 1);
+    std::string why = host_protect_reason(pid);
+    if (why.empty())
+        lua_pushnil(L);
+    else
+        lua_pushstring(L, why.c_str());
+    return 1;
+}
+
 int api_strings(lua_State* L)
 {
     database* db = need_db(L);
@@ -781,6 +813,7 @@ static const luaL_Reg api_funcs[] = {
     {"comment", api_comment}, {"set_comment", api_set_comment},
     {"disasm", api_disasm}, {"next_addr", api_next_addr}, {"decompile", api_decompile},
     {"functions", api_functions}, {"imports", api_imports}, {"exports", api_exports},
+    {"tls_callbacks", api_tls_callbacks}, {"host_protect_reason", api_host_protect_reason},
     {"strings", api_strings}, {"xrefs_to", api_xrefs_to}, {"find", api_find},
     {"here", api_here}, {"goto_addr", api_goto},
     {"register_command", api_register_command}, {"on", api_on},
