@@ -702,6 +702,7 @@ fn run() -> Result<ExitCode> {
                 dbg.kill();
             }
             let mut host = LuaHost::new(db).map_err(|e| anyhow::anyhow!(e))?;
+            host.fire("load", 0);
             host.exec_file(&script).map_err(|e| anyhow::anyhow!(e))?;
             host.run_registered().map_err(|e| anyhow::anyhow!(e))?;
             if host.command_names().is_empty() {
