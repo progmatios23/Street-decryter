@@ -1,0 +1,12 @@
+[package]
+name = "ceasta-fileinfo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "File info: headers, security flags, entropy, warnings (port of fileinfo.cpp)"
+
+[dependencies]
+ceasta-binary.workspace = true
+sha2 = "0.10"
+md-5 = "0.10"
+hex = "0.4"

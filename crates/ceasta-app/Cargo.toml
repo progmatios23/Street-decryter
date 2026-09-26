@@ -1,0 +1,13 @@
+[package]
+name = "ceasta-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ceasta GUI binary (Rust native)"
+
+[[bin]]
+name = "ceasta"
+path = "src/main.rs"
+
+[dependencies]
+ceasta-ui.workspace = true

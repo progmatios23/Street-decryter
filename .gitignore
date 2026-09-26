@@ -1,4 +1,5 @@
-build/
+/target/
+/build/
 .vs/
 x64/
 Debug/
@@ -6,4 +7,4 @@ Release/
 *.user
 dist/
 out/
-rust/target/
+legacy/**/build/

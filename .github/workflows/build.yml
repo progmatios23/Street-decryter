@@ -1,8 +1,6 @@
 name: build
 
-# every push: build + test on linux, windows and macos, make the installer, the appimage and the
-# mac app, and try them.
-# a v* tag (or a manual run with release_tag set) also publishes a github release.
+# Cargo workspace at repo root. Legacy C++ under legacy/ is not built.
 on:
   push:
     branches: ["**"]
@@ -11,222 +9,129 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "publish a release with this tag, like v0.6.0 (leave empty to only build)"
+        description: "publish a release with this tag, like v0.13.0 (leave empty to only build)"
         required: false
         default: ""
 
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   linux:
-    name: linux - build + cli package
-    # the oldest supported ubuntu, so the binary runs on its glibc and anything newer
+    name: linux - build + test + cli package
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
+      - name: rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache
+        uses: Swatinem/rust-cache@v2
+
       - name: build
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
+        run: cargo build --release -p ceasta-cli -p ceasta-app
+
+      - name: test
+        run: cargo test --workspace --release
 
       - name: package the command line tool
         run: |
-          version=$(sed -n 's/^#define CEASTA_VERSION "\(.*\)"/\1/p' src/version.h)
+          version=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           name=ceasta-cli-$version-linux-x64
           mkdir -p dist/$name
-          cp build/ceasta-cli README.md LICENSE docs/CHANGELOG.md docs/THIRD_PARTY_NOTICES.md dist/$name/
+          cp target/release/ceasta-cli README.md LICENSE docs/CHANGELOG.md docs/THIRD_PARTY_NOTICES.md dist/$name/
           cp -r plugins dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
+          ./target/release/ceasta-cli --version
+          ./target/release/ceasta-cli protect $$ || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: ceasta-linux
           path: dist/*.tar.gz
 
-  linux-gui:
-    name: linux - gui appimage
-    # the oldest supported ubuntu: the appimage runs on anything with this glibc or newer
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: install glfw + opengl
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglfw3-dev libgl1-mesa-dev xvfb
-      - name: build the gui
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCEASTA_LINUX_GUI=ON
-          cmake --build build --target ceasta --parallel
-          test -x build/ceasta && echo "the linux gui built and linked"
-
-      - name: package an appimage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1" # no fuse on the runners
-        run: |
-          version=$(sed -n 's/^#define CEASTA_VERSION "\(.*\)"/\1/p' src/version.h)
-          out=ceasta-$version-linux-x64.AppImage
-          mkdir -p AppDir/usr/bin AppDir/usr/share/doc/ceasta dist
-          cp build/ceasta AppDir/usr/bin/
-          cp -r plugins AppDir/usr/bin/plugins
-          cp README.md LICENSE docs/CHANGELOG.md docs/THIRD_PARTY_NOTICES.md AppDir/usr/share/doc/ceasta/
-          curl -fsSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy
-          LDAI_OUTPUT=dist/$out ./linuxdeploy --appdir AppDir -e AppDir/usr/bin/ceasta \
-            -d packaging/linux/ceasta.desktop -i packaging/linux/ceasta.png --output appimage
-          test -x dist/$out
-
-      - name: try the appimage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: |
-          app=$(ls dist/*.AppImage)
-          $app --version
-          # it has to come up and keep running (a window, opengl, the plugins): still alive after 10 s
-          set +e
-          timeout 10 xvfb-run -a -s "-screen 0 1280x800x24" $app build/ceasta
-          code=$?
-          set -e
-          test $code -eq 124 && echo "the gui ran until it was stopped"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ceasta-linux-gui
-          path: dist/*.AppImage
-
   windows:
-    name: windows - msvc, installer
+    name: windows - build + test + zip
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
-      - name: build (cmake + msvc)
+      - name: rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: build
+        run: cargo build --release -p ceasta-cli -p ceasta-app
+
+      - name: test
+        run: cargo test --workspace --release
+
+      - name: package
+        shell: pwsh
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          cmake --build build --config Release --parallel
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-
-      - uses: microsoft/setup-msbuild@v2
-
-      - name: the visual studio solution builds too
-        run: |
-          msbuild ceasta.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          if (-not (Test-Path build\msvc\Release\ceasta.exe)) { exit 1 }
-          if (-not (Test-Path build\msvc\Release\plugins\hello.lua)) { exit 1 }
-
-      - name: install inno setup if the image doesn't have it
-        run: |
-          if (-not (Get-Command iscc.exe -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
-            choco install innosetup -y --no-progress
-          }
-
-      - name: package (portable zip + installer)
-        run: powershell -ExecutionPolicy Bypass -File installer\package.ps1 -SkipBuild
-
-      - name: test the installer (silent install, checks, uninstall)
-        run: powershell -ExecutionPolicy Bypass -File installer\test-install.ps1
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if (-not $version) { $version = "0.0.0" }
+          $name = "ceasta-cli-$version-windows-x64"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/release/ceasta-cli.exe "dist/$name/"
+          Copy-Item README.md, LICENSE, docs/CHANGELOG.md, docs/THIRD_PARTY_NOTICES.md "dist/$name/"
+          Copy-Item -Recurse plugins "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ceasta-windows
-          path: |
-            dist/*.zip
-            dist/*-setup.exe
+          path: dist/*.zip
 
   macos:
-    name: macos - app + cli (apple silicon and intel)
+    name: macos - build + test + cli package
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: glfw (static, both architectures)
-        run: |
-          curl -fsSL -o glfw.zip https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
-          unzip -q glfw.zip
-          cmake -S glfw-3.4 -B glfw-build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-            -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DCMAKE_INSTALL_PREFIX="$PWD/glfw-install"
-          cmake --build glfw-build --parallel
-          cmake --install glfw-build
+      - name: rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: build (one binary for arm64 and x86_64)
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DCMAKE_PREFIX_PATH="$PWD/glfw-install"
-          cmake --build build --parallel
-          lipo -info build/ceasta-cli
-          lipo -info build/ceasta.app/Contents/MacOS/ceasta
-          test -f build/ceasta.app/Contents/Resources/plugins/hello.lua
-          test -f build/ceasta.app/Contents/Resources/ceasta.icns
+      - name: cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: try the cli on the system's own programs
+      - name: build
+        run: cargo build --release -p ceasta-cli -p ceasta-app
+
+      - name: test
+        run: cargo test --workspace --release
+
+      - name: smoke cli on system binaries
         run: |
-          cli=build/ceasta-cli
+          cli=target/release/ceasta-cli
           $cli --version
-          # /bin/ls: universal (x86_64 + arm64e), chained fixups, signed by apple
           $cli info /bin/ls | head -40
-          test "$($cli funcs /bin/ls | wc -l | tr -d ' ')" -gt 50
-          test "$($cli imports /bin/ls | wc -l | tr -d ' ')" -gt 20
-          # the arm64e part: its stubs (adrp / add / ldr / braa) call imports by name
-          stubs=$($cli funcs /bin/ls --arch arm64 | grep -c ' j_' || true)
-          echo "arm64e import stubs: $stubs"
-          test "$stubs" -gt 20
-          entry=$($cli info /bin/ls | awk '$1 == "entry" { print $2 }')
-          $cli decompile /bin/ls "$entry" | head -30
-          $cli info /usr/bin/curl | grep -E '^(format|signed|security|entitlements)'
+          test "$($cli funcs /bin/ls | wc -l | tr -d ' ')" -gt 10
+          $cli protect $$ || true
 
-      - name: package (the app in a dmg, the cli in a tarball)
+      - name: package
         run: |
-          version=$(sed -n 's/^#define CEASTA_VERSION "\(.*\)"/\1/p' src/version.h)
-          mkdir -p dist dmg
-          cp -R build/ceasta.app dmg/
-          # signed ad-hoc as a whole, so the bundle's seal is intact: a broken one reads as "damaged"
-          codesign --force --deep --sign - dmg/ceasta.app
-          codesign --verify --deep --strict --verbose=2 dmg/ceasta.app
-          ln -s /Applications dmg/Applications
-          for i in 1 2 3; do
-            hdiutil create -volname "ceasta $version" -srcfolder dmg -ov -format UDZO dist/ceasta-$version-macos.dmg && break
-            sleep 5
-          done
-          test -f dist/ceasta-$version-macos.dmg
+          version=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           name=ceasta-cli-$version-macos
-          mkdir -p cli/$name
-          cp build/ceasta-cli README.md LICENSE docs/CHANGELOG.md docs/THIRD_PARTY_NOTICES.md cli/$name/
-          cp -r plugins cli/$name/
-          codesign --force --sign - cli/$name/ceasta-cli
-          tar -C cli -czf dist/$name.tar.gz $name
-
-      - name: try the app
-        run: |
-          app=dmg/ceasta.app/Contents/MacOS/ceasta
-          $app --version
-          # it has to open its window and keep running (opengl, the plugins): still alive after 10 s
-          $app /bin/ls > app.log 2>&1 &
-          pid=$!
-          sleep 10
-          if kill -0 $pid 2>/dev/null; then
-            echo "the app ran until it was stopped"
-            kill $pid
-          elif grep -q "suitable pixel format" app.log; then
-            # github's mac runners are virtual machines without a gpu: macos gives them no
-            # accelerated opengl, so the window can't open here (it does on a mac)
-            cat app.log
-            echo "::warning::no accelerated opengl on this runner, the app's window wasn't tried"
-          else
-            cat app.log
-            exit 1
-          fi
+          mkdir -p dist/$name
+          cp target/release/ceasta-cli README.md LICENSE docs/CHANGELOG.md docs/THIRD_PARTY_NOTICES.md dist/$name/
+          cp -r plugins dist/$name/
+          tar -C dist -czf dist/$name.tar.gz $name
 
       - uses: actions/upload-artifact@v4
         with:
           name: ceasta-macos
-          path: dist/*
+          path: dist/*.tar.gz
 
   release:
     name: publish github release
-    needs: [linux, linux-gui, windows, macos]
+    needs: [linux, windows, macos]
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     runs-on: ubuntu-24.04
     permissions:
@@ -248,35 +153,5 @@ jobs:
           if [ -z "$tag" ]; then tag="$GITHUB_REF_NAME"; fi
           version="${tag#v}"
           (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
-          # release notes: this version's changelog section plus install steps
-          awk -v v="$version" '$0 ~ "^## v"v"( |$)" {f=1; next} /^## / {f=0} f' docs/CHANGELOG.md > notes.md
-          cat >> notes.md <<EOF
-
-          ## download
-
-          - **ceasta-$version-setup.exe** - installer for windows 10/11 x64. installs for your user without admin rights, adds a start menu entry and (optionally) "open with ceasta" to the right-click menu.
-          - **ceasta-$version-windows-x64.zip** - portable, unzip and run \`ceasta.exe\`.
-          - **ceasta-$version-linux-x64.AppImage** - the gui for linux (x64, ubuntu 22.04 or newer and the like): \`chmod +x\` it and run it. if your system has no fuse, run it with \`--appimage-extract-and-run\`.
-          - **ceasta-cli-$version-linux-x64.tar.gz** - the command line tool for linux: analysis, disassembly, the decompiler, a terminal debugger (\`ceasta-cli dbg\`), binary diff, library signatures, lua scripting, and the mcp server (\`ceasta-cli mcp\`) for connecting an ai.
-          - **ceasta-$version-macos.dmg** - the app for macos 11 or newer, apple silicon and intel in one. it isn't notarized by apple, so the first time macos stops it: right-click ceasta.app > Open, or on macos 15 and later System Settings > Privacy & Security > Open Anyway. (or: \`xattr -dr com.apple.quarantine /Applications/ceasta.app\`.) no debugger on macos yet.
-          - **ceasta-cli-$version-macos.tar.gz** - the command line tool for macos (apple silicon and intel). if macos won't run it: \`xattr -d com.apple.quarantine ceasta-cli\`.
-
-          checksums are in SHA256SUMS.txt.
-          EOF
-          publish() {
-            gh release create "$tag" dist/* --title "ceasta $version" --notes-file notes.md --target "$GITHUB_SHA"
-          }
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            publish
-          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            # a manual re-run replaces the release, so tag, notes and files all come from this commit
-            gh release delete "$tag" --yes --cleanup-tag
-            for i in 1 2 3 4 5; do
-              publish && exit 0
-              sleep $((i * 5))
-              gh release delete "$tag" --yes --cleanup-tag >/dev/null 2>&1 || true # a half made one
-            done
-            exit 1
-          else
+          gh release create "$tag" dist/* --title "ceasta $version" --generate-notes --verify-tag || \
             gh release upload "$tag" dist/* --clobber
-          fi

@@ -9,21 +9,39 @@ license.
 
 ## building
 
-see [build](../README.md#build) in the readme — everything is vendored, you only
-need a compiler (visual studio 2022 on windows, gcc or clang on linux).
+```bash
+cargo build -p ceasta-cli --release
+cargo test --workspace
+```
+
+rustc 1.75+ (CI uses stable). the C++ tree under `legacy/` is reference-only
+and is not built by the root workspace or CI.
 
 ## where things live
 
-see [code](../README.md#code) in the readme. roughly: `src/core/` has no ui
-(loaders, analysis, decompiler, debuggers, lua), `src/ui/` is one file per panel,
-`src/cli/` is `ceasta-cli`.
+| path | role |
+|------|------|
+| `crates/ceasta-binary` | PE / ELF / Mach-O / raw loaders |
+| `crates/ceasta-analysis` | functions, xrefs, strings |
+| `crates/ceasta-disasm` | iced-x86 decode |
+| `crates/ceasta-decompiler` | F5 pseudocode |
+| `crates/ceasta-debugger` | start / attach / step |
+| `crates/ceasta-host` | never attack this machine |
+| `crates/ceasta-db` | names, comments, projects |
+| `crates/ceasta-script` | Lua (`mlua`) |
+| `crates/ceasta-mcp` | MCP |
+| `crates/ceasta-cli` | headless CLI |
+| `crates/ceasta-ui` / `ceasta-app` | GUI |
+| `plugins/` | Lua plugins |
+| `legacy/` | archived C++ (not the product) |
+
+architecture notes: [`docs/rust/ARCHITECTURE.md`](../docs/rust/ARCHITECTURE.md).
 
 ## pull requests
 
 - keep a change focused on one thing
-- match the code around it: 4-space indent, short lowercase comments, no new
-  dependencies without talking about it first (everything is vendored on purpose)
-- it has to build on windows (msvc) and linux (gcc) — ci checks both on every push
+- match the code around it: rustfmt, short comments where non-obvious
+- it has to build with `cargo test --workspace` on linux and windows — ci checks both
 - say what you changed and how you checked it
 
 ## bugs
