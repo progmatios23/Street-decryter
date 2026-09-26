@@ -12,6 +12,8 @@
 
 ida-style listing, a decompiler, a function graph, an x64dbg-style debugger, lua plugins, and a built-in MCP server so you can point an AI at a binary — one small program, everything vendored, nothing to install to build.
 
+**Rust native rewrite (in progress):** see [`rust/`](rust/) — workspace crate map, advantages, and a compiling `ceasta-cli` (`info` / `disasm` / host protect). The C++ tree remains the shipping product until parity.
+
 ![listing](docs/listing.png)
 
 ## one function, three ways
