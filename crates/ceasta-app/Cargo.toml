@@ -3,7 +3,7 @@ name = "ceasta-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ceasta GUI binary (Rust native)"
+description = "ceasta GUI binary (Rust native egui/eframe)"
 
 [[bin]]
 name = "ceasta"
@@ -11,3 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 ceasta-ui.workspace = true
+eframe.workspace = true

@@ -11,7 +11,7 @@ use ceasta_decompiler::decompile_function;
 use ceasta_debugger::{attach_allowed, create as create_debugger, State as DbgState};
 use ceasta_disasm::decode_at;
 use ceasta_fileinfo;
-use ceasta_mcp::{McpOptions, McpServer};
+use ceasta_mcp::{serve_http_blocking, McpOptions, McpServer};
 use ceasta_script::LuaHost;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -160,8 +160,9 @@ enum Command {
         allow_debug: bool,
         #[arg(long)]
         allow_lua: bool,
-        /// Serve HTTP on [addr:]port instead of stdio (not yet ported)
-        #[arg(long, value_name = "ADDR:PORT")]
+        /// Serve HTTP instead of stdio. Bare PORT binds 127.0.0.1:PORT (localhost only by default).
+        /// Also accepts HOST:PORT (e.g. 127.0.0.1:8741). Same listener: /mcp JSON-RPC, analysis GETs, /debug/*.
+        #[arg(long, value_name = "[ADDR:]PORT")]
         http: Option<String>,
         /// Print tool list + file info JSON and exit (no stdio loop)
         #[arg(long)]
@@ -777,18 +778,16 @@ fn run() -> Result<ExitCode> {
                 allow_debug,
                 allow_lua,
             };
-            let mcp = McpServer::new(&db, &mop);
             if let Some(addr) = http {
-                eprintln!(
-                    "mcp --http {addr}: HTTP transport not yet ported (use stdio without --http)"
-                );
-                return Ok(ExitCode::from(1));
-            }
-            if dump {
-                println!("{}", serde_json::to_string_pretty(&mcp.tool_list())?);
-                println!("{}", serde_json::to_string_pretty(&mcp.file_info())?);
+                serve_http_blocking(db, &mop, &addr).map_err(|e| anyhow::anyhow!(e))?;
             } else {
-                mcp.serve_stdio().map_err(|e| anyhow::anyhow!(e))?;
+                let mcp = McpServer::new(&db, &mop);
+                if dump {
+                    println!("{}", serde_json::to_string_pretty(&mcp.tool_list())?);
+                    println!("{}", serde_json::to_string_pretty(&mcp.file_info())?);
+                } else {
+                    mcp.serve_stdio().map_err(|e| anyhow::anyhow!(e))?;
+                }
             }
         }
         Command::Debug { exe, steps } => {

@@ -6,11 +6,20 @@ license.workspace = true
 description = "MCP server scaffold for AI clients"
 
 [dependencies]
+axum.workspace = true
 ceasta-analysis.workspace = true
 ceasta-binary.workspace = true
 ceasta-db.workspace = true
+ceasta-debugger.workspace = true
 ceasta-decompiler.workspace = true
 ceasta-disasm.workspace = true
+ceasta-host.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower = { workspace = true, features = ["util"] }

@@ -1,5 +1,15 @@
 //! User annotations on top of a loaded `Binary` + `Analysis`.
 
+mod bookmarks;
+mod recent;
+mod undo;
+
+pub use bookmarks::{Bookmark, Bookmarks};
+pub use recent::{
+    load_recent_files, save_recent_files, RecentAddrs, RecentFiles, RecentState,
+};
+pub use undo::{AnnotationSnapshot, BatchGuard, Edit, UndoStack};
+
 use ceasta_analysis::{self, Analysis, Function};
 use ceasta_binary::Binary;
 use serde::{Deserialize, Serialize};
@@ -24,6 +34,8 @@ pub struct ProjectFile {
     pub names: BTreeMap<String, String>,
     pub comments: BTreeMap<String, String>,
     pub breakpoints: Vec<String>,
+    #[serde(default)]
+    pub bookmarks: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +45,11 @@ pub struct Database {
     pub names: BTreeMap<u64, String>,
     pub comments: BTreeMap<u64, String>,
     pub breakpoints: BTreeSet<u64>,
+    pub bookmarks: Bookmarks,
+    pub recent: RecentState,
+    pub undo: UndoStack,
+    /// Cursor for Lua `here` / UI (also mirrored in script host).
+    pub here: u64,
     pub dirty: bool,
 }
 
@@ -47,14 +64,118 @@ impl Database {
         for f in &analysis.functions {
             names.entry(f.start).or_insert_with(|| f.name.clone());
         }
+        let here = if bin.has_entry { bin.entry } else { bin.base };
         Self {
             bin,
             analysis,
             names,
             comments: BTreeMap::new(),
             breakpoints: BTreeSet::new(),
+            bookmarks: Bookmarks::default(),
+            recent: RecentState::default(),
+            undo: UndoStack::default(),
+            here,
             dirty: false,
         }
+    }
+
+    pub fn set_name(&mut self, addr: u64, name: impl Into<String>) {
+        let new = Some(name.into()).filter(|s| !s.is_empty());
+        let old = undo::apply_name(&mut self.names, addr, new.clone());
+        if old != new {
+            self.undo.push_name(addr, old, new);
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_comment(&mut self, addr: u64, text: impl Into<String>) {
+        let new = Some(text.into()).filter(|s| !s.is_empty());
+        let old = undo::apply_comment(&mut self.comments, addr, new.clone());
+        if old != new {
+            self.undo.push_comment(addr, old, new);
+            self.dirty = true;
+        }
+    }
+
+    pub fn toggle_bookmark(&mut self, addr: u64) -> bool {
+        let on = self.bookmarks.toggle(addr);
+        self.undo.push(Edit::ToggleBookmark { addr, added: on });
+        self.dirty = true;
+        on
+    }
+
+    pub fn bookmarks_list(&self) -> Vec<u64> {
+        self.bookmarks.list()
+    }
+
+    pub fn push_recent(&mut self, path: impl Into<PathBuf>) {
+        self.recent.push_file(path);
+    }
+
+    pub fn push_recent_addr(&mut self, addr: u64) {
+        self.recent.push_addr(addr);
+    }
+
+    pub fn set_here(&mut self, addr: u64) {
+        self.here = addr;
+        self.push_recent_addr(addr);
+    }
+
+    pub fn comment_at(&self, addr: u64) -> String {
+        self.comments.get(&addr).cloned().unwrap_or_default()
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.undo.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.undo.can_redo()
+    }
+
+    /// Undo the last annotation edit.
+    pub fn undo(&mut self) -> bool {
+        self.undo_edit()
+    }
+
+    /// Redo the last undone annotation edit.
+    pub fn redo(&mut self) -> bool {
+        self.redo_edit()
+    }
+
+    pub fn undo_edit(&mut self) -> bool {
+        self.undo.flush_coalesce();
+        let Some(e) = self.undo.pop_undo() else {
+            return false;
+        };
+        self.undo.muted = true;
+        undo::apply_edit_undo(
+            &mut self.names,
+            &mut self.comments,
+            &mut self.bookmarks,
+            &e,
+        );
+        self.undo.muted = false;
+        self.undo.push_redo(e);
+        self.dirty = true;
+        true
+    }
+
+    pub fn redo_edit(&mut self) -> bool {
+        let Some(e) = self.undo.pop_redo() else {
+            return false;
+        };
+        self.undo.muted = true;
+        undo::apply_edit_forward(
+            &mut self.names,
+            &mut self.comments,
+            &mut self.bookmarks,
+            &e,
+        );
+        self.undo.muted = false;
+        self.undo.push_undo_silent(e);
+        self.dirty = true;
+        true
     }
 
     pub fn fmt_addr(&self, addr: u64) -> String {
@@ -113,21 +234,6 @@ impl Database {
         u64::from_str_radix(hex, 16).ok()
     }
 
-    pub fn set_name(&mut self, addr: u64, name: impl Into<String>) {
-        self.names.insert(addr, name.into());
-        self.dirty = true;
-    }
-
-    pub fn set_comment(&mut self, addr: u64, text: impl Into<String>) {
-        let text = text.into();
-        if text.is_empty() {
-            self.comments.remove(&addr);
-        } else {
-            self.comments.insert(addr, text);
-        }
-        self.dirty = true;
-    }
-
     pub fn project_path(&self) -> PathBuf {
         PathBuf::from(format!("{}.ceasta", self.bin.path))
     }
@@ -145,6 +251,7 @@ impl Database {
                 .map(|(a, c)| (format!("{a:X}"), c.clone()))
                 .collect(),
             breakpoints: self.breakpoints.iter().map(|a| format!("{a:X}")).collect(),
+            bookmarks: self.bookmarks.list().iter().map(|a| format!("{a:X}")).collect(),
         }
     }
 
@@ -162,6 +269,11 @@ impl Database {
         for k in &p.breakpoints {
             if let Ok(a) = u64::from_str_radix(k.trim_start_matches("0x"), 16) {
                 self.breakpoints.insert(a);
+            }
+        }
+        for k in &p.bookmarks {
+            if let Ok(a) = u64::from_str_radix(k.trim_start_matches("0x"), 16) {
+                self.bookmarks.add(a);
             }
         }
         self.dirty = true;

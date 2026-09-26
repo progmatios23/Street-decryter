@@ -1,9 +1,15 @@
 //! Lua plugin host — embeds Lua 5.4 via `mlua` and exposes `ceasta.*`.
 
+mod api_ext;
+mod dbg;
+
+pub use dbg::{DebuggerBinding, DynDebugger, NullDebugger};
+
 use ceasta_analysis::find_bytes;
 use ceasta_db::Database;
 use ceasta_disasm::decode_at;
 use mlua::{Lua, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -26,6 +32,7 @@ struct Command {
 }
 
 type CmdBuf = Arc<Mutex<Vec<(String, String, mlua::RegistryKey)>>>;
+type EventMap = Arc<Mutex<HashMap<String, Vec<mlua::RegistryKey>>>>;
 
 /// Holds a Lua VM bound to one loaded database.
 pub struct LuaHost {
@@ -33,21 +40,39 @@ pub struct LuaHost {
     db: Arc<Mutex<Database>>,
     commands: Vec<Command>,
     pending: CmdBuf,
+    cursor: Arc<Mutex<u64>>,
+    events: EventMap,
+    debugger: Option<DynDebugger>,
 }
 
 impl LuaHost {
     pub fn new(db: Database) -> Result<Self> {
+        let entry = if db.bin.has_entry { db.bin.entry } else { db.bin.base };
         let lua = Lua::new();
         let db = Arc::new(Mutex::new(db));
         let pending: CmdBuf = Arc::new(Mutex::new(Vec::new()));
+        let cursor = Arc::new(Mutex::new(entry));
+        let events: EventMap = Arc::new(Mutex::new(HashMap::new()));
         let mut host = Self {
             lua,
             db,
             commands: Vec::new(),
             pending,
+            cursor,
+            events,
+            debugger: None,
         };
         host.install_api()?;
         Ok(host)
+    }
+
+    /// Replace stub `ceasta.dbg.*` with a live debugger binding.
+    pub fn bind_debugger(&mut self, binding: DynDebugger) -> Result<()> {
+        self.debugger = Some(binding.clone());
+        let globals = self.lua.globals();
+        let ceasta: mlua::Table = globals.get("ceasta")?;
+        crate::dbg::install_bound_dbg(&self.lua, &ceasta, binding)?;
+        Ok(())
     }
 
     fn harvest(&mut self) -> Result<()> {
@@ -276,8 +301,7 @@ impl LuaHost {
                 "set_comment",
                 self.lua.create_function(move |_, (addr, text): (u64, String)| {
                     let mut db = db.lock().map_err(|_| mlua::Error::external("db lock"))?;
-                    db.comments.insert(addr, text);
-                    db.dirty = true;
+                    db.set_comment(addr, text);
                     Ok(())
                 })?,
             )?;
@@ -289,8 +313,7 @@ impl LuaHost {
                 "set_name",
                 self.lua.create_function(move |_, (addr, name): (u64, String)| {
                     let mut db = db.lock().map_err(|_| mlua::Error::external("db lock"))?;
-                    db.names.insert(addr, name);
-                    db.dirty = true;
+                    db.set_name(addr, name);
                     Ok(())
                 })?,
             )?;
@@ -318,6 +341,13 @@ impl LuaHost {
             )?;
         }
 
+        api_ext::install_extended(
+            &self.lua,
+            &ceasta,
+            self.db.clone(),
+            self.cursor.clone(),
+            self.events.clone(),
+        )?;
         self.lua.globals().set("ceasta", ceasta)?;
         Ok(())
     }
@@ -373,7 +403,9 @@ impl LuaHost {
         self.commands.iter().map(|c| c.name.clone()).collect()
     }
 
-    pub fn fire(&mut self, _event: &str, _arg: i64) {}
+    pub fn fire(&mut self, event: &str, arg: i64) {
+        api_ext::fire_events(&self.lua, &self.events, event, arg);
+    }
 }
 
 fn value_to_string(v: &Value) -> String {

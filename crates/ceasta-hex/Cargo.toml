@@ -1,0 +1,9 @@
+[package]
+name = "ceasta-hex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hex dump / view helpers for the UI and scripts"
+
+[dependencies]
+ceasta-binary.workspace = true

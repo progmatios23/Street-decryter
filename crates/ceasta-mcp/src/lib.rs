@@ -1,11 +1,19 @@
-//! MCP tool surface — JSON-RPC stdio scaffold (HTTP comes next).
+//! MCP tool surface — JSON-RPC stdio + localhost HTTP.
+
+mod http;
+
+pub use http::{parse_bind_addr, router, serve_http, serve_http_blocking, HttpState};
 
 use ceasta_analysis::{build_cfg, find_bytes};
 use ceasta_db::Database;
+use ceasta_debugger::Debugger;
 use ceasta_decompiler::decompile_function;
 use ceasta_disasm::decode_at;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -34,6 +42,8 @@ pub struct McpServer<'a> {
     pub db: &'a Database,
     pub allow_debug: bool,
     pub allow_lua: bool,
+    /// Shared debugger used by HTTP control API and MCP debug tools.
+    pub debugger: Option<&'a Mutex<Box<dyn Debugger>>>,
 }
 
 impl<'a> McpServer<'a> {
@@ -42,7 +52,13 @@ impl<'a> McpServer<'a> {
             db,
             allow_debug: opts.allow_debug,
             allow_lua: opts.allow_lua,
+            debugger: None,
         }
+    }
+
+    pub fn with_debugger(mut self, dbg: &'a Mutex<Box<dyn Debugger>>) -> Self {
+        self.debugger = Some(dbg);
+        self
     }
 
     pub fn tool_names(&self) -> Vec<&'static str> {
@@ -66,7 +82,13 @@ impl<'a> McpServer<'a> {
             "read_bytes",
         ];
         if self.allow_debug {
-            tools.extend_from_slice(&["debug_start", "debug_status"]);
+            tools.extend_from_slice(&[
+                "debug_start",
+                "debug_status",
+                "debug_continue",
+                "debug_step_into",
+                "debug_kill",
+            ]);
         }
         if self.allow_lua {
             tools.push("run_lua");
@@ -281,8 +303,7 @@ impl<'a> McpServer<'a> {
                     .get("pattern")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| Error::Msg("pattern required".into()))?;
-                let hits = find_bytes(&self.db.bin, pat, 100)
-                    .map_err(Error::Msg)?;
+                let hits = find_bytes(&self.db.bin, pat, 100).map_err(Error::Msg)?;
                 Ok(json!(hits
                     .iter()
                     .map(|a| json!({
@@ -315,11 +336,8 @@ impl<'a> McpServer<'a> {
                     "hex": buf.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
                 }))
             }
-            "debug_start" | "debug_status" => {
-                if !self.allow_debug {
-                    return Err(Error::Msg("debug tools disabled (pass --allow-debug)".into()));
-                }
-                Err(Error::Msg("debugger backend not yet ported".into()))
+            "debug_start" | "debug_status" | "debug_continue" | "debug_step_into" | "debug_kill" => {
+                self.call_debug_tool(name, args)
             }
             "run_lua" => {
                 if !self.allow_lua {
@@ -329,6 +347,102 @@ impl<'a> McpServer<'a> {
             }
             other => Err(Error::Msg(format!("unknown tool: {other}"))),
         }
+    }
+
+    fn call_debug_tool(&self, name: &str, args: &Value) -> Result<Value> {
+        if !self.allow_debug {
+            return Err(Error::Msg(
+                "debug tools disabled (pass --allow-debug)".into(),
+            ));
+        }
+        let slot = self
+            .debugger
+            .ok_or_else(|| Error::Msg("debugger not available on this transport".into()))?;
+        let mut dbg = slot
+            .lock()
+            .map_err(|_| Error::Msg("debugger lock poisoned".into()))?;
+        match name {
+            "debug_start" => {
+                let exe = args
+                    .get("exe")
+                    .or_else(|| args.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(self.db.bin.path.as_str());
+                let arg_str = args
+                    .get("args")
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        Value::Array(a) => a
+                            .iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_default();
+                dbg.start(Path::new(exe), &arg_str)
+                    .map_err(|e| Error::Msg(e.to_string()))?;
+                let _ = wait_dbg_stop(&mut **dbg, 15_000);
+                Ok(debug_snapshot(&**dbg))
+            }
+            "debug_status" => Ok(debug_snapshot(&**dbg)),
+            "debug_continue" => {
+                dbg.cont().map_err(|e| Error::Msg(e.to_string()))?;
+                Ok(debug_snapshot(&**dbg))
+            }
+            "debug_step_into" => {
+                dbg.step_into().map_err(|e| Error::Msg(e.to_string()))?;
+                let _ = wait_dbg_stop(&mut **dbg, 5_000);
+                Ok(debug_snapshot(&**dbg))
+            }
+            "debug_kill" => {
+                dbg.kill();
+                Ok(debug_snapshot(&**dbg))
+            }
+            _ => Err(Error::Msg(format!("unknown debug tool: {name}"))),
+        }
+    }
+
+    /// Handle one JSON-RPC request. Returns `None` for notifications (no response).
+    pub fn handle_rpc(&self, req: &Value) -> Option<Value> {
+        let id = req.get("id").cloned().unwrap_or(Value::Null);
+        let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        if matches!(method, "notifications/initialized" | "initialized") {
+            return None;
+        }
+        let result = match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "ceasta", "version": env!("CARGO_PKG_VERSION") },
+            })),
+            "tools/list" => Ok(json!({ "tools": self.tools_schema() })),
+            "tools/call" => {
+                let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                match self.call_tool(name, &args) {
+                    Ok(v) => Ok(json!({
+                        "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }]
+                    })),
+                    Err(e) => Ok(json!({
+                        "isError": true,
+                        "content": [{ "type": "text", "text": e.to_string() }]
+                    })),
+                }
+            }
+            "ping" => Ok(json!({})),
+            "" => Err(Error::Msg("missing method".into())),
+            other => Err(Error::Msg(format!("method not found: {other}"))),
+        };
+        Some(match result {
+            Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
+            Err(e) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": e.to_string() }
+            }),
+        })
     }
 
     /// Minimal MCP JSON-RPC loop over stdin/stdout (initialize + tools/list + tools/call).
@@ -353,50 +467,10 @@ impl<'a> McpServer<'a> {
                     continue;
                 }
             };
-            let id = req.get("id").cloned().unwrap_or(Value::Null);
-            let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
-            let params = req.get("params").cloned().unwrap_or(json!({}));
-            let result = match method {
-                "initialize" => Ok(json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "ceasta", "version": env!("CARGO_PKG_VERSION") },
-                })),
-                "notifications/initialized" | "initialized" => {
-                    // notification — no response
-                    continue;
-                }
-                "tools/list" => Ok(json!({ "tools": self.tools_schema() })),
-                "tools/call" => {
-                    let name = params
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                    match self.call_tool(name, &args) {
-                        Ok(v) => Ok(json!({
-                            "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }]
-                        })),
-                        Err(e) => Ok(json!({
-                            "isError": true,
-                            "content": [{ "type": "text", "text": e.to_string() }]
-                        })),
-                    }
-                }
-                "ping" => Ok(json!({})),
-                "" => Err(Error::Msg("missing method".into())),
-                other => Err(Error::Msg(format!("method not found: {other}"))),
-            };
-            let resp = match result {
-                Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
-                Err(e) => json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32601, "message": e.to_string() }
-                }),
-            };
-            writeln!(stdout, "{resp}").map_err(|e| Error::Msg(e.to_string()))?;
-            let _ = stdout.flush();
+            if let Some(resp) = self.handle_rpc(&req) {
+                writeln!(stdout, "{resp}").map_err(|e| Error::Msg(e.to_string()))?;
+                let _ = stdout.flush();
+            }
         }
         Ok(())
     }
@@ -419,13 +493,17 @@ fn tool_desc(name: &str) -> &'static str {
         "search_bytes" => "byte pattern search",
         "lookup" => "what's at an address",
         "read_bytes" => "read raw bytes",
-        "debug_start" | "debug_status" => "debugger (not yet ported)",
+        "debug_start" => "start the target under the debugger",
+        "debug_status" => "debugger state, pc, registers",
+        "debug_continue" => "continue the debuggee",
+        "debug_step_into" => "single-step into",
+        "debug_kill" => "kill the debuggee",
         "run_lua" => "run lua (not yet ported)",
         _ => "",
     }
 }
 
-fn resolve_arg(db: &Database, args: &Value, key: &str) -> Option<u64> {
+pub(crate) fn resolve_arg(db: &Database, args: &Value, key: &str) -> Option<u64> {
     let v = args.get(key)?;
     if let Some(s) = v.as_str() {
         return db.resolve(s);
@@ -436,7 +514,7 @@ fn resolve_arg(db: &Database, args: &Value, key: &str) -> Option<u64> {
     None
 }
 
-fn disasm_lines(db: &Database, mut addr: u64, n: usize) -> Vec<Value> {
+pub(crate) fn disasm_lines(db: &Database, mut addr: u64, n: usize) -> Vec<Value> {
     let mut out = Vec::new();
     for _ in 0..n {
         match decode_at(&db.bin, addr) {
@@ -452,6 +530,34 @@ fn disasm_lines(db: &Database, mut addr: u64, n: usize) -> Vec<Value> {
         }
     }
     out
+}
+
+fn wait_dbg_stop(dbg: &mut dyn Debugger, timeout_ms: u32) -> bool {
+    let start = Instant::now();
+    let limit = Duration::from_millis(timeout_ms as u64);
+    while start.elapsed() < limit {
+        if dbg.state() != ceasta_debugger::State::Running {
+            return true;
+        }
+        dbg.poll(50);
+    }
+    dbg.state() != ceasta_debugger::State::Running
+}
+
+fn debug_snapshot(dbg: &dyn Debugger) -> Value {
+    let regs: Vec<_> = dbg
+        .registers()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| json!({ "name": r.name, "value": format!("{:X}", r.value) }))
+        .collect();
+    json!({
+        "state": format!("{:?}", dbg.state()).to_ascii_lowercase(),
+        "pc": dbg.pc().ok().map(|p| format!("{p:X}")),
+        "regs": regs,
+        "reason": dbg.stop_reason(),
+        "pid": dbg.pid(),
+    })
 }
 
 trait IfEmpty {

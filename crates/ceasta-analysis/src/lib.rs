@@ -4,12 +4,27 @@
 
 mod flags;
 mod noreturn;
+mod pe_extras;
+mod strings;
+mod switch;
 mod worker;
 
 pub use flags::{
     FL_CODE, FL_DATA, FL_FUNC, FL_LABEL, FL_STR, FL_TAIL,
 };
 pub use noreturn::is_noreturn_name;
+pub use pe_extras::{
+    analyze_pe_extras, format_pe_extras, packing_score, tls_comment_suggestions, tls_name_suggestions,
+    PeExtras, PeHint, PeHintKind, SectionSummary, Severity,
+};
+pub use strings::{
+    classify_lua_style, classify_strings, classify_text, classify_text_all, ClassifiedString,
+    StringKind, StringReport,
+};
+pub use switch::{
+    apply_switches, recover_switches, recover_switches_default, SwitchCase, SwitchInfo,
+    SwitchOptions, SwitchPassStats, TableEncoding,
+};
 
 use ceasta_binary::Binary;
 use std::collections::{BTreeMap, HashMap, HashSet};

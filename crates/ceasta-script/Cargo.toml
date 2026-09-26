@@ -10,5 +10,6 @@ ceasta-analysis.workspace = true
 ceasta-binary.workspace = true
 ceasta-db.workspace = true
 ceasta-disasm.workspace = true
+ceasta-host.workspace = true
 mlua.workspace = true
 thiserror.workspace = true

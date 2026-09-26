@@ -1,28 +1,24 @@
-//! GUI binary — loads a file when given a path; egui shell comes next.
+//! GUI binary — eframe shell around `ceasta_ui::CeastaApp`.
 
 use std::env;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let mut state = ceasta_ui::AppState::default();
-    println!("ceasta (rust native)");
-    println!(
-        "protect_host={}, break_on_tls={}",
-        state.dbg.options().protect_host,
-        state.dbg.options().break_on_tls
+    let initial = env::args().nth(1).map(PathBuf::from);
+
+    let options = ceasta_ui::native_options();
+    let result = eframe::run_native(
+        "ceasta",
+        options,
+        Box::new(move |cc| Ok(Box::new(ceasta_ui::CeastaApp::new(cc, initial)))),
     );
 
-    if let Some(path) = env::args().nth(1) {
-        match state.load_file(std::path::Path::new(&path)) {
-            Ok(()) => println!("{}", state.summary()),
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                return ExitCode::from(1);
-            }
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("eframe error: {e}");
+            ExitCode::from(1)
         }
-    } else {
-        println!("{}", state.summary());
-        println!("usage: ceasta <file>   or   ceasta-cli info <file>");
     }
-    ExitCode::SUCCESS
 }

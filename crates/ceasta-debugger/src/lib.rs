@@ -169,6 +169,13 @@ pub fn create() -> Box<dyn Debugger> {
     }
 }
 
+/// `create()` wrapped for HTTP / multi-threaded hosts (`axum` handlers share one session).
+pub type SharedDebugger = std::sync::Arc<std::sync::Mutex<Box<dyn Debugger>>>;
+
+pub fn create_shared() -> SharedDebugger {
+    std::sync::Arc::new(std::sync::Mutex::new(create()))
+}
+
 /// Check attach policy without constructing a backend.
 pub fn attach_allowed(pid: u32, protect_host: bool) -> Result<()> {
     if protect_host {
@@ -198,8 +205,10 @@ mod tests {
     }
 
     #[test]
-    fn attach_protect_on_create() {
-        let mut dbg = create();
+    fn create_shared_mutex() {
+        let shared = create_shared();
+        let mut dbg = shared.lock().unwrap();
+        assert_eq!(dbg.state(), State::None);
         let err = dbg.attach(std::process::id()).unwrap_err();
         assert!(matches!(err, Error::Protected { .. }));
     }
