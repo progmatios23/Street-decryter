@@ -178,7 +178,7 @@ fn draw_cfg(
                         EdgeKind::NotTaken => state.colors.ret,
                         EdgeKind::Next => state.colors.muted,
                     };
-                    painter.line_segment([from, to], egui::Stroke::new(1.5, color));
+                    painter.line_segment([from, to], egui::Stroke::new(1.5_f32, color));
                 }
             }
 
@@ -195,7 +195,7 @@ fn draw_cfg(
                     rect,
                     3.0,
                     fill,
-                    egui::Stroke::new(1.0, state.colors.header_bg),
+                    egui::Stroke::new(1.0_f32, state.colors.header_bg),
                     egui::StrokeKind::Inside,
                 );
 

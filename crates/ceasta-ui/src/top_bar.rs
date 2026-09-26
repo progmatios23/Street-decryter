@@ -300,7 +300,7 @@ fn edit_menu(ui: &mut egui::Ui, state: &mut AppState) {
         {
             if let Some(db) = state.db.as_ref() {
                 state.clipboard = db.fmt_addr(state.selected_addr);
-                ui.output_mut(|o| o.copied_text = state.clipboard.clone());
+                ui.ctx().copy_text(state.clipboard.clone());
                 state.log_info(format!("copied {}", state.clipboard));
             }
             ui.close_menu();

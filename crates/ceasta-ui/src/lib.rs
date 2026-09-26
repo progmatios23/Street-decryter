@@ -300,6 +300,7 @@ impl AppState {
             "loaded {} — {n_funcs} functions, {n_strs} strings, {n_xrefs} xrefs",
             path.display()
         ));
+        crate::bottom_panel::dump_summary(self);
         // try sidecar project
         let project_msg = if let Some(db) = self.db.as_mut() {
             let proj = db.project_path();

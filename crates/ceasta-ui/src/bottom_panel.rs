@@ -65,7 +65,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState) {
             .collect::<Vec<_>>()
             .join("\n");
         state.clipboard = all.clone();
-        ui.output_mut(|o| o.copied_text = all);
+        ui.ctx().copy_text(all);
         state.log_info("copied log");
     }
 
@@ -172,7 +172,7 @@ pub fn dump_summary(state: &mut AppState) {
         db.analysis.strings.len(),
         db.analysis.xto.len()
     );
-    drop(db);
+    let _ = db;
     state.log_info(line1);
     state.log_info(line2);
 }

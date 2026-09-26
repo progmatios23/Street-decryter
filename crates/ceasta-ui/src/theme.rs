@@ -2,7 +2,7 @@
 //!
 //! Three palettes (dark / light / high-contrast) mirror `legacy/cpp-src/theme.h`.
 
-use egui::{Color32, CornerRadius, FontFamily, FontId, Rounding, Stroke, Style, Visuals};
+use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, Style, Visuals};
 
 /// Which UI palette is active.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -396,7 +396,7 @@ pub fn section_header(ui: &mut egui::Ui, colors: &ListingColors, title: &str, de
         egui::Sense::hover(),
     );
     ui.painter()
-        .rect_filled(rect, Rounding::ZERO, colors.header_bg);
+        .rect_filled(rect, CornerRadius::ZERO, colors.header_bg);
     ui.painter().text(
         rect.left_center() + egui::vec2(8.0, 0.0),
         egui::Align2::LEFT_CENTER,

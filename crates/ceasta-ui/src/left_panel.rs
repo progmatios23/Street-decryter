@@ -161,7 +161,7 @@ fn draw_functions(ui: &mut egui::Ui, state: &mut AppState) {
     }
     if let Some(n) = copy_name {
         state.clipboard = n.clone();
-        ui.output_mut(|o| o.copied_text = n);
+        ui.ctx().copy_text(n);
     }
 }
 
