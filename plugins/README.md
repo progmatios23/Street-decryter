@@ -16,6 +16,8 @@ folder, so you can add your own without touching the install:
 | `name_wrappers.lua` | renames one-call wrapper functions to `w_<callee>` |
 | `strings_report.lua` | groups urls / paths / registry keys / format strings |
 | `trace_calls.lua` | debugger plugin: single-steps a stopped target and logs calls |
+| `tls_review.lua` | lists PE TLS callbacks (run before entry) and comments them |
+| `host_guard.lua` | explains host protection; logs a warning on a host_alert (BSOD watch) |
 
 ## quick start
 

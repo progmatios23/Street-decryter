@@ -63,6 +63,9 @@ struct binary {
     std::vector<export_entry> exports;
     std::vector<symbol_entry> symbols;
     std::vector<uint64_t> func_hints;     // extra function starts (pdata, tls callbacks, init arrays)
+    // pe tls callbacks: code the loader runs before the entry point (and again on thread attach).
+    // empty on other formats. the same addresses are also in func_hints / symbols as tls_callback_N
+    std::vector<uint64_t> tls_callbacks;
     std::vector<uint64_t> ptr_locs;       // addresses holding absolute pointers (from relocations)
     // exception landing pads (c++, rust): code only the unwinder jumps to. (function, pad): the
     // pad is part of that function, not one of its own

@@ -130,6 +130,12 @@ static const std::vector<action>& actions()
         {"Debug", "Program arguments...", "", no_process, [](app_state& s) { open_dialog(s, dialog_kind::run_args); }},
         {"Debug", "Stop at the entry point: on / off", "", always,
             [](app_state& s) { s.dbg.break_on_entry = !s.dbg.break_on_entry; }},
+        {"Debug", "Break on tls callbacks: on / off", "", always,
+            [](app_state& s) { s.dbg.break_on_tls = !s.dbg.break_on_tls; }},
+        {"Debug", "Protect this machine: on / off", "", always,
+            [](app_state& s) { s.dbg.protect_host = !s.dbg.protect_host; }},
+        {"Debug", "Watch for host crash / BSOD: on / off", "", always,
+            [](app_state& s) { s.dbg.watch_host = !s.dbg.watch_host; }},
 
         {"AI", "Connect an AI...", "", always, [](app_state& s) { open_dialog(s, dialog_kind::ai); }},
         {"AI", "Review names the AI suggested", "", has_file, [](app_state& s) { open_dialog(s, dialog_kind::review); }},

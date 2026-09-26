@@ -202,15 +202,20 @@ void parse_tls(binary& b, uint32_t rva)
             return;
         list = v;
     }
+    b.tls_callbacks.clear();
     for (int k = 0; list && k < 64; k++) {
         uint64_t cb;
         if (!b.read_ptr(list + (uint64_t)k * b.ptr_size(), cb) || cb == 0)
             break;
         if (!b.is_code(cb))
             continue;
+        b.tls_callbacks.push_back(cb);
         b.func_hints.push_back(cb);
         b.symbols.push_back({util::fmt("tls_callback_%d", k), cb, 0, true});
     }
+    if (!b.tls_callbacks.empty())
+        b.notes.push_back(util::fmt("%zu tls callback%s (run before the entry point)", b.tls_callbacks.size(),
+            b.tls_callbacks.size() == 1 ? "" : "s"));
 }
 
 // base relocations, every absolute pointer in the image has one

@@ -92,6 +92,7 @@ add_library(ceasta_core STATIC
     src/core/elf.cpp
     src/core/exchange.cpp
     src/core/fileinfo.cpp
+    src/core/host_guard.cpp
     src/core/json.cpp
     src/core/kuna.cpp
     src/core/lua_host.cpp

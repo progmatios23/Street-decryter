@@ -1,5 +1,20 @@
 # changelog
 
+## unreleased
+
+- **tls callbacks, first class**: pe tls callbacks are kept on the binary, listed
+  with addresses in file info, exposed as `ceasta.tls_callbacks()`, and the new
+  **Debug → Break on tls callbacks** (on by default) puts breakpoints on them
+  when a debug session starts — so the listing follows code that runs before the
+  entry point. plugin: `tls_review.lua`
+- **protect this machine** (on by default): attach refuses ceasta itself, its
+  parent, and critical os processes (windows: System / csrss / lsass / ...;
+  linux: pid 1, kernel threads, systemd/init). the attach dialog marks them.
+  lua: `ceasta.host_protect_reason(pid)`. plugin: `host_guard.lua`
+- **watch for host crash / BSOD** (on by default): while debugging, ceasta
+  notices a big wall-clock jump or a critical process vanishing and raises a
+  `host_alert` event (and a log line). toggle under the Debug menu
+
 ## v0.12.0 - 2026-09-25
 
 - **macos**: `ceasta-x.y.z-macos.dmg` (the app) and `ceasta-cli-x.y.z-macos.tar.gz`, one build

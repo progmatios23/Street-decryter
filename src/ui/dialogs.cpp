@@ -433,35 +433,58 @@ static void attach(app_state& s, dialog_state& d)
     ImGui::SameLine();
     if (ImGui::Button("Refresh"))
         d.procs = list_processes();
-    ImVec2 size(ImGui::GetFontSize() * 30, ImGui::GetTextLineHeightWithSpacing() * 14);
+    if (s.dbg.protect_host)
+        ImGui::TextDisabled("protect this machine is on: critical processes are listed but can't be attached");
+    ImVec2 size(ImGui::GetFontSize() * 36, ImGui::GetTextLineHeightWithSpacing() * 14);
     uint32_t pick = 0;
-    if (ImGui::BeginTable("##procs", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, size)) {
+    if (ImGui::BeginTable("##procs", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, size)) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("PID");
         ImGui::TableSetupColumn("Process", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Protected");
         ImGui::TableHeadersRow();
         std::string f = util::trim(d.filter);
         for (const process_info& p : d.procs) {
             std::string pid = std::to_string(p.pid);
             if (!f.empty() && !util::icontains(p.name, f) && pid.find(f) == std::string::npos)
                 continue;
+            bool blocked = s.dbg.protect_host && !p.protect_reason.empty();
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::PushID((int)p.pid);
-            if (ImGui::Selectable(pid.c_str(), d.addr == p.pid, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
+            ImGuiSelectableFlags flags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
+            if (blocked)
+                flags |= ImGuiSelectableFlags_Disabled;
+            if (ImGui::Selectable(pid.c_str(), d.addr == p.pid, flags)) {
                 d.addr = p.pid;
-                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                if (!blocked && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     pick = p.pid;
             }
+            if (blocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", p.protect_reason.c_str());
             ImGui::PopID();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(p.name.c_str());
+            if (blocked)
+                ImGui::TextDisabled("%s", p.name.c_str());
+            else
+                ImGui::TextUnformatted(p.name.c_str());
+            ImGui::TableNextColumn();
+            if (blocked)
+                ImGui::TextDisabled("yes");
+            else
+                ImGui::TextUnformatted("");
         }
         ImGui::EndTable();
     }
     if (d.procs.empty())
-        ImGui::TextDisabled("no processes (attaching needs the windows build)");
-    if (ok_cancel(d.addr != 0))
+        ImGui::TextDisabled("no processes (attaching needs the windows or linux build)");
+    bool can_ok = d.addr != 0;
+    if (can_ok && s.dbg.protect_host) {
+        for (const process_info& p : d.procs)
+            if (p.pid == (uint32_t)d.addr && !p.protect_reason.empty())
+                can_ok = false;
+    }
+    if (ok_cancel(can_ok))
         pick = (uint32_t)d.addr;
     if (pick) {
         ImGui::CloseCurrentPopup();
